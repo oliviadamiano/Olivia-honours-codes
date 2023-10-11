@@ -1,0 +1,591 @@
+BiocManager::install("knitr")
+BiocManager::install("limma")
+BiocManager::install("minfi")
+aBiocManager::install("IlluminaHumanMethylationEPICanno.ilm10b4.hg37")
+BiocManager::install("IlluminaHumanMethylationEPICmanifest")
+BiocManager::install("RColorBrewer")
+BiocManager::install("missMethyl")
+BiocManager::install("minfiData")
+BiocManager::install("Gviz")
+BiocManager::install("DMRcate")
+BiocManager::install("stringr")
+BiocManager::install("FlowSorted.Blood.450k")
+install.packages("illuminaio")
+BiocManager::install("bumphunter")
+BiocManager::install("regionReport")
+BiocManager::install("derfinderPlot") 
+BiocManager::install("dmrff")
+BiocManager::install("wateRmelon")
+BiocManager::install("RnBeads ")
+BiocManager::install("iEVORA")
+BiocManager::install("rGREAT")
+BiocManager::install("annotatr")
+BiocManager::install("goregion")
+BiocManager::install("bsseq")
+BiocManager::install("IlluminaHumanMethylationEPICanno.ilmn12.hg19")
+BiocManager::install("IlluminaHumanMethylationEPICanno.ilm10b4.hg19")
+BiocManager::install("jokergoo/IlluminaHumanMethylationEPICv2manifest")
+BiocManager::install("jokergoo/IlluminaHumanMethylationEPICv2anno.20a1.hg38")
+
+
+library(knitr)
+require(limma)
+require(minfi)
+library("IlluminaHumanMethylationEPICanno.ilm10b4.hg19")
+library("IlluminaHumanMethylationEPICmanifest")
+library(RColorBrewer)
+library(missMethyl)
+library(Gviz)
+library(DMRcate)
+library(stringr)
+library("illuminaio")
+library("bumphunter")
+library('regionReport')
+library("derfinderPlot")
+library("rGREAT")
+library("bsseq")
+library("IlluminaHumanMethylationEPICv2manifest")
+library("IlluminaHumanMethylationEPICv2anno.20a1.hg38")
+
+
+#library(devtools)
+#install_github("achilleasNP/IlluminaHumanMethylationEPICmanifest") 
+#install_github("achilleasNP/IlluminaHumanMethylationEPICanno.ilm10b5.hg38")
+#and force minfi to use the package by setting the annotation of your "RGChannelSet" object as below:
+  
+# # Usage instructions
+RGset@annotation = c(array = "IlluminaHumanMethylationEPIC", annotation = "ilm10b5.hg38")
+
+####this is the code made by Aaron for Olivia to learn####
+
+save.image("analysed_data_olivia.RData")
+load("analysed_data_olivia.RData")
+rm(list = ls(all.names = TRUE))
+setwd("D:/data/Olivia_HOSCN/")
+anno<-getAnnotation( IlluminaHumanMethylationEPICv2anno.20a1.hg38)
+
+
+###I made an import targets file that is only Olivia's samples and not Lucy's
+base<-file.path("D:/data/Olivia_HOSCN/HOSCN")
+write.csv(targets2, file="targets_Olivia_final.csv")
+targets <- read.metharray.sheet(base,pattern="targets2.csv")
+rgSet <- read.metharray.exp(targets=targets, force=TRUE) 
+
+annotation(rgSet)<- c(array = "IlluminaHumanMethylationEPICv2", annotation = "20a1.hg38")
+sampleNames(rgSet) <- targets$Pool_ID  
+
+
+
+
+
+detP <- detectionP(rgSet)
+head(detP)
+require(RColorBrewer)
+colSums(detP)
+pal <- brewer.pal(24,"Dark2")
+
+
+library(ggplot2)
+
+dim(detP)
+greycols<-gray.colors(24, start = 0.3, end = 0.9, gamma = 2.2, alpha = NULL)
+data<-colMeans(detP)
+labels_vec<-colnames(detP)
+rot_angle<-45
+barplot(colMeans(detP), col=greycols[factor(targets$Treatment)], las=2,
+        cex.names=0.8, ylab="Mean detection p-values")
+rotate_x <- function(data,labels_vec, rot_angle) {
+  plt <- barplot(data, col=greycols[factor(targets$Treatment)], xaxt="n")
+  text(plt, par("usr")[3], labels = labels_vec, srt = rot_angle, adj = c(1,1), xpd = TRUE, cex=1) 
+}
+
+rotate_x(data,colnames(detP), 45)
+
+
+abline(h=0.05,col="red")
+legend("top", legend=levels(factor(targets$Exposure)), fill=greycols, 
+       bg="white",horiz = FALSE,bty='n', inset=c(1.50,0), xpd = TRUE)
+
+qcReport(rgSet, sampNames=targets$Sample_Name, sampGroups=targets$Treatment, 
+         pdf="qcReport.pdf")
+dim(rgSet)
+keep <- colMeans(detP) < 0.05
+###Any sample with a mean detection value across all probes, less than 0.05 would need to be removed from the dataset
+###All Samples passed this QC
+(keep)
+rgSet <- rgSet[,keep]
+
+dim(rgSet)
+#1105209      24
+####All samples passed QC
+
+
+##quantile normalisation
+mSetSq<-preprocessQuantile(rgSet,fixOutliers = TRUE,quantileNormalize = TRUE)
+#mSetSq<-preprocessSWAN(rgSet)
+
+
+#############PCA plots#####
+
+
+# ensure probes are in the same order in the mSetSq and detP objects
+detP2 <- detP[match(featureNames(mSetSq),rownames(detP)),] 
+
+# remove any probes that have failed in one or more samples
+keep <- rowSums(detP2 < 0.01) == ncol(mSetSq) 
+table(keep)
+
+
+#keep
+#FALSE   TRUE 
+#7616   922459     
+
+mSetSqFlt <- mSetSq[keep,]
+dim(mSetSqFlt)
+#922459              24
+
+
+library(limma)
+library(ggplot2)
+
+head(targets)
+mycols<-c("salmon", "skyblue","seagreen3","mediumpurple")
+
+
+MDS_Treatment_Slide<-(plotMDS(getM(mSetSq), top=1000, gene.selection="pairwise", dim=c(1,2)))
+
+MDS_Treatment_Slide<-as.data.frame(cbind(MDS_Treatment_Slide$x,MDS_Treatment_Slide$y))
+
+ggplot(MDS_Treatment_Slide, aes(x = V1, y = V2)) + theme_bw() +
+  geom_point(size =3,aes(color = as.factor(targets$Time))) + scale_fill_hue() +
+  xlab(paste("PC1:leading LogFC dim1")) +
+  ylab(paste("PC2: leading LogFC dim2")) +
+  theme(legend.position = "right") +
+  coord_fixed()+  theme(axis.line = element_line(color = 'black'), 
+                        plot.background = element_blank() ,
+                        panel.grid.major = element_blank() , 
+                        panel.grid.minor = element_blank(), 
+                        panel.border = element_blank(), 
+                        axis.text.x = element_text(color = 'black', size=15), 
+                        axis.text.y = element_text(color = 'black', size=15),
+                        axis.title.x = element_blank(),
+                        axis.title.y = element_blank())
+
+
+ggsave(filename ="MDS_plot_unfilteresMvals.jpeg",dpi = 800, scale = 1.5,
+       limitsize = FALSE)
+graphics.off()
+
+
+
+
+
+#############PCA plots#####
+mVals<-getM(mSetSqFlt)
+mVals_S<-mVals[,targets$Experiment == 'Synchronous']
+mVals_A<-mVals[,targets$Experiment == 'Asynchronous']
+
+
+targets_S<-targets[targets$Experiment == 'Synchronous',]
+targets_A<-targets[targets$Experiment == 'Asynchronous',]
+
+mycols<-c("salmon", "skyblue","seagreen3","mediumpurple", "orange","blue", "grey","pink")
+
+(plotMDS(mVals_S, top=1000, gene.selection="pairwise", dim=c(1,2)))
+
+MDS_Treatment_Slide<-as.data.frame(plotMDS(mVals_S, top=1000, gene.selection="pairwise", dim=c(1,2)))
+ggplot(MDS_Treatment_Slide, aes(x = x, y = y, color = as.factor(targets_S$Treatment), shape = targets_S$Replicate)) + 
+  scale_color_manual(values=c("orange","blue")) +
+  theme_bw() +
+  geom_point(size =3) + 
+  xlab(paste("PC1:leading LogFC dim3 (27%)")) +
+  ylab(paste("PC2: leading LogFC dim4 (12%)")) +
+  coord_fixed() + theme(axis.line = element_line(color = 'black'), 
+                        plot.background = element_blank() ,
+                        panel.grid.major = element_blank() , 
+                        panel.grid.minor = element_blank(), 
+                        panel.border = element_blank(), 
+                        axis.text.x = element_text(size=20), 
+                        axis.text.y = element_text(size=20))
+
+ggsave(filename ="MDS_plot_Synchronous1 and 2.jpeg",dpi = 800, scale = 1.5,
+       limitsize = FALSE)
+graphics.off()
+
+(plotMDS(mVals_A, top=1000, gene.selection="pairwise", dim=c(3,4)))
+
+MDS_Treatment_A<-as.data.frame(plotMDS(mVals_A, top=1000, gene.selection="pairwise", dim=c(3,4)))
+
+ggplot(MDS_Treatment_A, aes(x = x, y = y, color = as.factor(targets_A$Treatment), shape = targets_A$Replicate)) + 
+  scale_color_manual(values=c("orange","blue")) +
+  theme_bw() +
+  geom_point(size =3) + 
+  xlab(paste("PC1:leading LogFC dim1 (13%)")) +
+  ylab(paste("PC2: leading LogFC dim2 (15%)")) +
+  coord_fixed() + theme(axis.line = element_line(color = 'black'), 
+                        plot.background = element_blank() ,
+                        panel.grid.major = element_blank() , 
+                        panel.grid.minor = element_blank(), 
+                        panel.border = element_blank(), 
+                        axis.text.x = element_text(size=20), 
+                        axis.text.y = element_text(size=20))
+
+
+
+ggsave(filename ="MDS_plot_ASynchronous3 and 4.jpeg",dpi = 800, scale = 1.5,
+       limitsize = FALSE)
+
+
+###############mvalues!###
+
+
+
+
+#####################
+
+
+bVals<-getBeta(mSetSqFlt)
+bVals_S<-bVals[,targets$Experiment == 'Synchronous']
+bVals_A<-bVals[,targets$Experiment == 'Asynchronous']
+
+(mVals_A[1:5,1:5])
+(mVals_S[1:5,1:5])
+(bVals_A[1:5,1:5])
+(bVals_S[1:5,1:5])
+
+targets_S$Treatment2=ifelse(targets_S$Treatment=="0","Control","Treatment")
+targets_S$name<- paste0(targets_S$Treatment2, sep='_', targets_S$Time)
+
+targets_A$Treatment2=ifelse(targets_A$Treatment=="0","Control","Treatment")
+targets_A$name<- paste0(targets_A$Treatment2, sep='_', targets_A$Time)
+
+##check sample clustering all samples##
+mycols<-c("salmon", "skyblue","seagreen3","mediumpurple", "orange","blue", "grey","pink")
+d <- t(bVals_A)
+e <- dist(d, method = "minkowski", p = 2)
+hc <- hclust(e)
+plot(hc, main="Cluster Beta change of all probes", labels = targets_A$name)
+dev.off()
+labels(hc) 
+jpeg(filename ="Hclust_beta_asynch.jpeg", width=10, height=10,units='cm',res = 1000)
+
+plot(hc, main=NULL, hang = -.5,labels=FALSE, ylab="",xlab=" ",sub=" ",axes=FALSE)
+text(x = 1:nrow(targets_A),cex = .75, labels = targets_A$name[hc$order], par("usr")[3]+1.5, srt = 45, adj=c(1,0), xpd = T,col=mycols[factor(targets_A$Replicate)[hc$order]])
+dev.off()
+
+
+
+# this is the factor of interest
+###
+##without the block would used this fir: fit <- lmFit(mVals, design)
+
+
+
+design<-model.matrix(~1+ Treatment + Replicate , data = targets_A)
+colnames(design)
+
+
+#targets_asynch
+#mvals_asynch
+
+
+# fit the linear model 
+
+fit <- lmFit(mVals_A, design)
+
+fit<- eBayes(fit)
+
+TopProbes<-topTable(fit, coef='Treatment', adjust='BH', number=Inf)
+TopProbesb<-TopProbes[1:20,]
+TopProbesb<-cbind(TopProbesb,anno[match(rownames(TopProbesb), rownames(anno)),c('chr', 'pos', 'UCSC_RefGene_Name')])
+colnames(TopProbesb)[9]='Gene'
+#This line of code wasn't written by Olivia:
+TopProbesb$Gene<-sapply(TopProbesb$Gene, function(x) paste(unique(unlist(strsplit(as.character(x), ";"))), collapse = ";"))
+
+TopProbesb$Direction<-ifelse(TopProbesb$logFC>0, 'UP', 'DOWN')
+
+#this is the file you format for your Thesis Table
+write.csv(TopProbesb,file='Top 20 asynchronous probes.csv')
+
+
+volcanoplot(fit,coef=2,highlight=0,main="Asynchronous",xlim=c(-3,3), ylim=c(0,8),cex.lab=1.5, cex.axis=1.5)
+
+
+
+#we have Asynch Treatment and controll in the targets, we want to take all Treatment and all targets Means per person
+#and plot them in a boxplot then do a t-test on the means'
+
+#targets_a and bVals_a
+
+MeanTrtA<-bVals_A[,targets_A$Treatment2 == 'Treatment']
+MeanTrtA<-colMeans(MeanTrtA)
+
+MeanControlA<-bVals_A[,targets_A$Treatment2 == 'Control']
+MeanControlA<-colMeans(MeanControlA)
+
+t.test(MeanTrtA, MeanControlA)
+
+#data:  MeanTrtA and MeanControlA
+#t = -0.37253, df = 5.9527, p-value = 0.7224
+#alternative hypothesis: true difference in means is not equal to 0
+#95 percent confidence interval:
+#  -0.008138657  0.005991549
+#sample estimates:
+#  mean of x mean of y 
+#0.6106956 0.6117691
+
+MethValA<-as.data.frame(as.numeric(c(paste(MeanTrtA), paste(MeanControlA))))
+colnames(MethValA)='MeanMeth'
+MethValA$Treatment<-c('Treatment', 'Treatment', 'Treatment', 'Treatment', 'Control', 'Control', 'Control', 'Control')
+MethValA<-as.data.frame(MethValA)
+
+ggplot(MethValA, aes(x=Treatment, y=MeanMeth))   +   geom_boxplot() + theme_bw() + theme(axis.line = element_line(color = 'black'), 
+                                                                                         plot.background = element_blank() ,
+                                                                                         panel.grid.major = element_blank() , 
+                                                                                         panel.grid.minor = element_blank(), 
+                                                                                         panel.border = element_blank(), 
+                                                                                         axis.text.x = element_text(size=15), 
+                                                                                         axis.text.y = element_text(size=20))
+########Top most variable CpGs########
+
+design<-model.matrix(~1+ Treatment + Replicate , data = targets_A)
+colnames(design)
+
+
+#targets_asynch
+#mvals_asynch
+
+
+# fit the linear model 
+library(missMethyl)
+vfit <- varFit(mVals_A, design)
+
+vfit<- eBayes(vfit)
+
+TopvProbes<-topVar(vfit, coef='Treatment', number=800000)
+TopvProbesb<-TopvProbes[TopvProbes$Adj.P.Value<0.05,]
+TopvProbesb<-cbind(TopvProbesb,anno[match(rownames(TopvProbesb), rownames(anno)),c('chr', 'pos', 'UCSC_RefGene_Name')])
+colnames(TopvProbesb)[9]='Gene'
+#This line of code wasn't written by Olivia:
+TopvProbesb$Gene<-sapply(TopvProbesb$Gene, function(x) paste(unique(unlist(strsplit(as.character(x), ";"))), collapse = ";"))
+
+TopvProbesb$Direction<-ifelse(TopvProbesb$LogVarRatio >0, 'UP', 'DOWN')
+
+write.csv(TopvProbesb,file="Significant variable probes Asynch.csv")
+
+
+############################################
+###repeat on synchronous
+##############################
+mVals_S
+bVals_S
+targets_S
+
+
+##check sample clustering all samples##
+mycols<-c("salmon", "skyblue","seagreen3","mediumpurple", "orange","blue", "grey","pink")
+d <- t(bVals_S)
+e <- dist(d, method = "minkowski", p = 2)
+hc <- hclust(e)
+
+jpeg(filename ="Hclust_synch.jpeg", width=10, height=10,units='cm',res = 1000)
+
+plot(hc, main=NULL, hang = -.5,labels=FALSE, ylab="",xlab=" ",sub=" ",axes=FALSE)
+text(x = 1:nrow(targets_S),cex = .75, labels = targets_S$name[hc$order], par("usr")[3]+1.5, srt = 45, adj=c(1,0), xpd = T,col=mycols[factor(targets_S$Replicate)[hc$order]])
+dev.off()
+
+
+
+# this is the factor of interest
+###
+##without the block would used this fir: fit <- lmFit(mVals, design)
+
+
+
+design<-model.matrix(~0+ name+ Replicate , data = targets_S)
+colnames(design)
+design
+
+#targets_asynch
+#mvals_asynch
+
+
+# fit the linear model 
+
+fit <- lmFit(mVals_S, design)
+contr<-makeContrasts(T1=nameTreatment_24 - nameControl_24, 
+                     T2=nameTreatment_72 - nameControl_72, 
+                     T3=nameControl_72 - nameControl_24, 
+                     T4=nameTreatment_72 - nameTreatment_24,
+                     levels=design)
+cFit=contrasts.fit(fit, contr)
+eB<- eBayes(cFit)
+dt2<-(decideTests(eB))
+summary(dt2)
+
+
+TopProbes<-topTable(eB, coef='T2', adjust='BH', number=Inf)
+TopProbesb<-TopProbes[1:20,]
+TopProbesb<-cbind(TopProbesb,anno[match(rownames(TopProbesb), rownames(anno)),c('chr', 'pos', 'UCSC_RefGene_Name')])
+colnames(TopProbesb)[9]='Gene'
+#This line of code wasn't written by Olivia:
+TopProbesb$Gene<-sapply(TopProbesb$Gene, function(x) paste(unique(unlist(strsplit(as.character(x), ";"))), collapse = ";"))
+
+TopProbesb$Direction<-ifelse(TopProbesb$logFC>0, 'UP', 'DOWN')
+
+#this is the file you format for your Thesis Table
+write.csv(TopProbesb,file='Top 20 synchronous probes 72 Hours.csv')
+
+
+volcanoplot(eB,coef=2,highlight=0,main="Synchronous",xlim=c(-3,3), ylim=c(0,8),cex.lab=1.5, cex.axis=1.5)
+
+save.image("Oliva_HOSCN.RData")
+require("DMRcate")
+
+myannoT1<-cpg.annotate('array',mVals_S,what='M',
+                       arraytype='EPIC',
+                       analysis.type='differential',
+                       design=design,contrasts=TRUE, 
+                       cont.matrix=contr, 
+                       coef="T2",
+                       fdr=0.1)
+
+
+
+####no significant probes at time 2 so can't find dmrs###
+DMRsT1<-dmrcate(myannoT1,lambda=1000,C=2,pcutoff="fdr",
+                betacutoff=0.05, min.cpgs = 5)
+
+
+results.rangesT1<-extractRanges(DMRsT1,genome='hg19')
+results.rangesT1
+length(results.rangesT1)
+results.rangesT2<-extractRanges(DMRsT2,genome='hg19')
+
+results.rangesT1
+length(results.rangesT1)
+
+
+
+#we have Asynch Treatment and controll in the targets, we want to take all Treatment and all targets Means per person
+#and plot them in a boxplot then do a t-test on the means'
+
+#targets_a and bVals_a
+
+t.test(MeanTrtS, MeanControlS)
+
+
+global.meth<-data.frame(mean_control1=colMeans(bVals_S[,targets_S$name=="Control_24"]),
+                        mean_control2=colMeans(bVals_S[,targets_S$name=="Treatment_72"]),
+                        mean_T1=colMeans(bVals_S[,targets_S$name=="Treatment_24"]),
+                        mean_T2=colMeans(bVals_S[,targets_S$name=="Treatment_72"]))
+
+
+mean((global.meth$mean_control2))
+
+t.test((global.meth$mean_control1), (global.meth$mean_T1))
+#mean of x mean of y 
+#0.6100839 0.6101750 
+#p-value = 0.9785
+sd(global.meth$mean_control1)
+#0.005027968
+sd(global.meth$mean_T1)
+# 0.004066251
+
+t.test((global.meth$mean_control2),(global.meth$mean_T2))
+#mean of x mean of y 
+#0.6096961 0.6096961 
+#p-value = 1
+sd(global.meth$mean_control2)
+#0.001555984
+sd(global.meth$mean_T2)
+#0.001555984
+
+
+library(dplyr)
+global<- as.data.frame(targets_S)  %>% cbind(colMeans(bVals_S))
+colnames(global)[15]<-"MeanMeth"
+
+ggplot(global, aes(x=Treatment2, y=MeanMeth))   +   geom_boxplot() + theme_bw() + theme(axis.line = element_line(color = 'black'), 
+                                                                                         plot.background = element_blank() ,
+                                                                                         panel.grid.major = element_blank() , 
+                                                                                         panel.grid.minor = element_blank(), 
+                                                                                         panel.border = element_blank(), 
+                                                                                         axis.text.x = element_text(size=15), 
+                                                                                         axis.text.y = element_text(size=20))
+########Top most variable CpGs########
+design<-model.matrix(~0+ name+ Replicate , data = targets_S)
+
+colnames(design)
+
+
+#targets_asynch
+#mvals_asynch
+
+
+# fit the linear model 
+library(missMethyl)
+vfit <- varFit(mVals_S, design)
+vfit<-contrasts.fit(vfit,contr)
+vfit<- eBayes(vfit)
+dt2<-(decideTests(vfit))
+summary(dt2)
+        
+        
+TopvProbes<-topVar(vfit, coef=2, number=800000)
+TopvProbesb<-TopvProbes[TopvProbes$Adj.P.Value<0.05,]
+TopvProbesb<-cbind(TopvProbesb,anno[match(rownames(TopvProbesb), rownames(anno)),c('chr', 'pos', 'UCSC_RefGene_Name')])
+colnames(TopvProbesb)[9]='Gene'
+#This line of code wasn't written by Olivia:
+TopvProbesb$Gene<-sapply(TopvProbesb$Gene, function(x) paste(unique(unlist(strsplit(as.character(x), ";"))), collapse = ";"))
+
+TopvProbesb$Direction<-ifelse(TopvProbesb$LogVarRatio >0, 'UP', 'DOWN')
+
+
+
+write.csv(TopvProbesb,file="Significant variable probes synchronous 72 Hours.csv")
+
+
+##########we stopped here############
+#############manhatten plot ############
+BiocManager::install("qqman")
+library(qqman)
+
+####for olivia we are doing this manhatten plot using the top most variable positions
+TopProbesb$SNP<-rownames(TopProbesb)
+qqman<-as.data.frame(TopProbesb[,c("SNP", "chr","pos","P.Value","logFC")])
+
+colnames(qqman)<-c("SNP","CHR","BP","P", "logFC")
+qqman$CHR<-gsub("\\chr*", "",qqman$CHR)
+
+cutx<-qqman[qqman$CHR=="X",]
+
+cuty<-qqman[qqman$CHR=="Y",]
+cut<-rbind(cutx,cuty)
+
+qqman<-qqman[!(qqman$SNP%in%cut$SNP),]
+qqman$CHR<-as.integer(qqman$CHR)
+manhattan(qqman, chr = "CHR", bp = "BP", p = "P", snp = "SNP",
+          col = c("gray10", "gray60"), chrlabs = NULL, 
+          suggestiveline = F,
+          genomewideline = -log10(1e-06),
+          highlight = NULL, logp = TRUE, 
+          annotatePval = F, annotateTop = FALSE)
+dev.off()
+
+
+
+qq(qqman$P, main = "Q-Q plot of p-values", 
+   xlim = c(0, 7), 
+   ylim = c(0,12),
+   pch = 18, 
+   col = "black", 
+   cex = .5, 
+   las = 1)
+
+
+
+
+
+            
+            
